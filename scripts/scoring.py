@@ -83,7 +83,8 @@ def main():
     args = parse_args()
     print(args.input)
     potentials = load_all_potentials(args.potentials_dir)
-    parser = PDB.PDBParser(QUIET=True)
+    PDBparser = PDB.PDBParser(QUIET=True)
+    CIFparser = PDB.MMCIFParser(QUIET=True)
     scores = {}
     joinflag = False
 
@@ -95,6 +96,13 @@ def main():
     for input_file in inputs:
         fullpath = os.path.join(args.input[0], input_file) if joinflag else input_file
         print(f"[INFO] Processing {input_file}")
+        if input_file.endswith('.pdb'):
+            parser = PDBparser
+        elif input_file.endswith('.cif'):
+            parser = CIFparser
+        else:
+            print(f"[WARNING] Unsupported file format for {input_file}. Skipping.")
+            continue
         structure = parser.get_structure("RNA", fullpath)
         score = est_score(get_distance(structure), potentials)
         print(f"Score for {input_file}: {score}")
