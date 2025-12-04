@@ -11,7 +11,7 @@ Simply, first train the potential using known RNA structures, then plot the pote
 ## Training
 Below is an example command for training the statistical potential using PDB/MMCIF files stored in `./data/pdbs/` directory. You can specify your own input file or directory and output directory as needed. Other options are provided including bin size, distance cutoff, etc. Use the `-h` flag to see all available options.
 ```bash
-python ./script/training.py ./data/pdbs/
+python ./scripts/training.py ./data/pdbs/
 # python training.py <input_file/dir> -o <output_dir>
 # python training.py -h
 ```
@@ -24,7 +24,7 @@ To visualize the statistical potential, you can use the following command. This 
 ![alt text](./potential_plot_sample.png)
 
 ```bash
-python ./script/plotting.py -p ./potentials/ -o ./plots/
+python ./scripts/plotting.py -p ./potentials/ -o ./plots/
 # python plotting.py -p <input_potential_dir> -o <output_plot_dir>
 # python plotting.py -h
 ```
@@ -33,7 +33,7 @@ python ./script/plotting.py -p ./potentials/ -o ./plots/
 To score RNA structures using the computed statistical potentials, use the following command. You can specify your own input PDB/MMCIF files and output directory as needed. The output will be in the form of a CSV table. Use the `-h` flag to see all available options.
 
 ```bash
-python ./script/scoring.py -i ./data/pdbs/ -p ./potentials/ -o ./scores.csv
+python ./scripts/scoring.py -i ./data/pdbs/ -p ./potentials/ -o ./scores.csv
 # python scoring.py -i <input_pdb_dir> -p <input_potential_dir> -o <output_score_file>
 # python scoring.py -h
 ```
