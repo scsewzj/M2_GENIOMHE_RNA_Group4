@@ -43,7 +43,7 @@ python ./scripts/plotting.py -p ./potentials/ -o ./plots/
 To score RNA structures using the computed statistical potentials, use the following command. You can specify your own input PDB/MMCIF files and output directory as needed. The output will be in the form of a CSV table. Use the `-h` flag to see all available options.
 
 ```bash
-python ./scripts/scoring.py -i ./data/pdbs/ -p ./potentials/ -o ./scores.csv
+python ./scripts/scoring.py ./data/pdbs/ -p ./potentials/ -o ./scores.csv
 # python scoring.py -i <input_pdb_dir> -p <input_potential_dir> -o <output_score_file>
 # python scoring.py -h
 ```
