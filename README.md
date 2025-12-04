@@ -9,11 +9,14 @@ The workflow includes three main scripts under path `./scripts` : `training.py`,
 Simply, first train the potential using known RNA structures, then plot the potential for visualization, and finally use the potential to score new RNA structures.
 
 ## Install
+### Conda
 You can use conda or any other variants package manager of python compatible with it to install(e.g.: mamba, micromamba etc.).
 ```bash
 conda env create -f environment.yml -n rnascore
 conda activate rnascore
 ```
+### Docker
+Under Development
 
 ## Training
 Below is an example command for training the statistical potential using PDB/MMCIF files stored in `./data/pdbs/` directory. You can specify your own input file or directory and output directory as needed. Other options are provided including bin size, distance cutoff, etc. Use the `-h` flag to see all available options.
