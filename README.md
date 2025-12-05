@@ -24,6 +24,8 @@ Below is an example command for training the statistical potential using PDB/MMC
 python ./scripts/training.py ./data/pdbs/
 # python training.py <input_file/dir> -o <output_dir>
 # python training.py -h
+# Optional: restrict to specific chains with a simple config file (one entry per line: "<filename> <chain>").
+# python training.py ./data/pdbs/ -c chain_selection.txt
 ```
 
 
@@ -46,4 +48,7 @@ To score RNA structures using the computed statistical potentials, use the follo
 python ./scripts/scoring.py ./data/pdbs/ -p ./potentials/ -o ./scores.csv
 # python scoring.py <input_pdb_dir> -p <input_potential_dir> -o <output_score_file>
 # python scoring.py -h
+# Optional: match training by selecting specific chains with a config file.
+# python scoring.py ./data/pdbs/ -p ./potentials/ -o ./scores.csv -c chain_selection.txt
 ```
+Notes: scoring now reports one score per chain per file (CSV columns: file,chain,score). All chains are processed unless restricted by a chain config.

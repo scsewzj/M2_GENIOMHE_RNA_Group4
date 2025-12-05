@@ -1,4 +1,13 @@
-from training import extract_c3_atoms, calculate_ED, update_distance_counts, BASE_PAIRS, RESIDUE_NAME_MAP, SORTED_PAIR_TO_CANONICAL
+from training import (
+    extract_c3_atoms,
+    calculate_ED,
+    update_distance_counts,
+    BASE_PAIRS,
+    RESIDUE_NAME_MAP,
+    SORTED_PAIR_TO_CANONICAL,
+    load_chain_selection,
+    resolve_allowed_chains,
+)
 from Bio import PDB
 
 from plotting import load_all_potentials
@@ -26,7 +35,8 @@ def parse_args() -> argparse.Namespace:
         "--csv-output", "-o",
         type=str,
         default=None,
-        help="If provided, output scores for each input structure to the given CSV file."
+        help="If provided, output scores for each chain to the given CSV file. "
+             "Columns: file,chain,score."
     )
     parser.add_argument(
         "--potentials-dir", "-p",
@@ -34,22 +44,35 @@ def parse_args() -> argparse.Namespace:
         default="data/potentials",
         help="Directory containing potential files (*.txt). Default: data/potentials"
     )
+    parser.add_argument(
+        "--chain-config", "-c",
+        type=str,
+        default=None,
+        help="Optional config file listing which chains to process per structure. "
+             "Each non-empty line should be '<filename> <chain_id>'. "
+             "If omitted, all chains are processed."
+    )
     return parser.parse_args()
 
 
-def get_distance(structure, atom_type="C3'"):
-    distances = {}
-    for bp in BASE_PAIRS:
-        distances[bp] = []
+def get_chain_distances(structure, atom_type="C3'", allowed_chains=None):
+    """
+    Collect raw distances per chain.
+    Returns: dict[chain_id] -> dict[bp] -> List[float]
+    """
+    chain_distances = {}
     for model in structure:
         for chain in model:
+            if allowed_chains is not None and chain.id not in allowed_chains:
+                continue
             c3_atoms = extract_c3_atoms(chain, atom_type)
             if not c3_atoms:
                 continue
-            new_distances = update_distance_counts(c3_atoms, None, None, None, return_raw_distances=True)
-            for pair, dists in new_distances.items():
-                distances[pair].extend(dists)
-    return distances
+            new_distances = update_distance_counts(
+                c3_atoms, None, None, None, return_raw_distances=True
+            )
+            chain_distances[chain.id] = new_distances
+    return chain_distances
 
 def score_linear_interpolation(scoreprofile, distance):
     """
@@ -87,6 +110,9 @@ def main():
     CIFparser = PDB.MMCIFParser(QUIET=True)
     scores = {}
     joinflag = False
+    chain_selection = load_chain_selection(args.chain_config)
+    if chain_selection:
+        print(f"[INFO] Loaded chain selection for {len(chain_selection)} entries.")
 
     if os.path.isdir(args.input[0]):
         inputs = [f for f in os.listdir(args.input[0]) if f.endswith('.pdb') or f.endswith('.cif')]
@@ -104,17 +130,23 @@ def main():
             print(f"[WARNING] Unsupported file format for {input_file}. Skipping.")
             continue
         structure = parser.get_structure("RNA", fullpath)
-        score = est_score(get_distance(structure), potentials)
-        print(f"Score for {input_file}: {score}")
-        scores[input_file] = score
+        allowed_chains = resolve_allowed_chains(fullpath, chain_selection)
+        chain_distances = get_chain_distances(structure, args.atom_type, allowed_chains)
+        if not chain_distances:
+            print(f"[WARN] No chains processed for {input_file}.")
+            continue
+        scores[input_file] = {}
+        for chain_id, dist_dict in chain_distances.items():
+            score = est_score(dist_dict, potentials)
+            print(f"Score for {input_file} (chain {chain_id}): {score}")
+            scores[input_file][chain_id] = score
     if args.csv_output is not None:
         with open(args.csv_output, 'w') as f:
-            for input_file, score in scores.items():
-                print(f"{input_file},{score}", file=f)
+            print("file,chain,score", file=f)
+            for input_file, chain_scores in scores.items():
+                for chain_id, score in chain_scores.items():
+                    print(f"{input_file},{chain_id},{score}", file=f)
         print(f"[INFO] Scores written to {args.csv_output}")
     
 if __name__ == "__main__":
     main()
-
-
-

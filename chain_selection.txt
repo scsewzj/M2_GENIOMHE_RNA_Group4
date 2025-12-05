@@ -1,0 +1,2 @@
+# Chain selection config: "<filename> <chain_id ...>"
+4MSB.pdb A B

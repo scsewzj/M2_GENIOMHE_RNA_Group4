@@ -130,6 +130,14 @@ def parse_args() -> argparse.Namespace:
         help="Maximum penalty score for never-observed distances (default: 10.0). "
              "Used as a cap for pseudo-energy scores and for steric clash penalties."
     )
+    parser.add_argument(
+        "--chain-config", "-c",
+        type=str,
+        default=None,
+        help="Optional config file listing which chains to process per structure. "
+             "Each non-empty line should be '<filename> <chain_id>'. "
+             "If omitted, all chains are processed."
+    )
     return parser.parse_args()
 
 
@@ -161,6 +169,51 @@ def calculate_ED(atom1: PDB.Atom.Atom, atom2: PDB.Atom.Atom) -> float:
     """Euclidean distance between two Biopython Atom objects."""
     v = atom1.coord - atom2.coord
     return float(np.linalg.norm(v))
+
+
+def load_chain_selection(config_path: str) -> Dict[str, List[str]]:
+    """
+    Read chain-selection config: each line 'filename chain_id' (comments with '#').
+    Returns mapping of filename or path to a list of allowed chain IDs.
+    """
+    selection: Dict[str, List[str]] = {}
+    if not config_path:
+        return selection
+
+    if not os.path.isfile(config_path):
+        print(f"[WARN] Chain config not found: {config_path}", file=sys.stderr)
+        return selection
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) < 2:
+                print(f"[WARN] Invalid chain config line (expected '<file> <chain>'): {line}",
+                      file=sys.stderr)
+                continue
+            filename, *chains = parts
+            chain_ids: List[str] = []
+            for token in chains:
+                chain_ids.extend([c for c in token.split(",") if c])
+            if not chain_ids:
+                print(f"[WARN] No chain IDs parsed from line: {line}", file=sys.stderr)
+                continue
+            selection[filename] = chain_ids
+    return selection
+
+
+def resolve_allowed_chains(pdb_path: str, chain_selection: Dict[str, List[str]]):
+    """
+    Determine allowed chains for a given file path, checking both full path and basename.
+    Returns a list of chain IDs or None if no restriction applies.
+    """
+    if not chain_selection:
+        return None
+    basename = os.path.basename(pdb_path)
+    return chain_selection.get(pdb_path) or chain_selection.get(basename)
 
 
 def extract_c3_atoms(chain: PDB.Chain.Chain, atom_type: str = "C3'") -> List[Tuple[int, PDB.Atom.Atom, str, float]]:
@@ -459,6 +512,10 @@ def main() -> None:
     PDBparser = PDB.PDBParser(QUIET=True)
     CIFparser = PDB.MMCIFParser(QUIET=True)
 
+    chain_selection = load_chain_selection(args.chain_config)
+    if chain_selection:
+        print(f"[INFO] Loaded chain selection for {len(chain_selection)} entries.")
+
     for pdb_path in pdb_files:
         print(f"[INFO] Processing {pdb_path}")
         if pdb_path.lower().endswith(".cif") or pdb_path.lower().endswith(".ent"):
@@ -467,8 +524,12 @@ def main() -> None:
             parser = PDBparser
         structure = parser.get_structure("RNA", pdb_path)
 
+        allowed_chains = resolve_allowed_chains(pdb_path, chain_selection)
+
         for model in structure:
             for chain in model:
+                if allowed_chains is not None and chain.id not in allowed_chains:
+                    continue
                 c3_atoms = extract_c3_atoms(chain, args.atom_type)
                 if not c3_atoms:
                     continue
