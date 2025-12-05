@@ -130,6 +130,11 @@ def parse_args() -> argparse.Namespace:
         help="Maximum penalty score for never-observed distances (default: 10.0). "
              "Used as a cap for pseudo-energy scores and for steric clash penalties."
     )
+    parser.add_argument(
+        "--interchain-distance", "-id",
+        action="store_true",
+        help="Whether to include inter-chain distances in the statistics (default: False). "
+    )
     return parser.parse_args()
 
 
@@ -191,7 +196,7 @@ def extract_c3_atoms(chain: PDB.Chain.Chain, atom_type: str = "C3'") -> List[Tup
             continue
 
         bfactor = target_atom.get_bfactor()
-        atoms_list.append((i, target_atom, base_code, bfactor))
+        atoms_list.append((i, target_atom, base_code, bfactor, chain.id))
 
     return atoms_list
 
@@ -213,7 +218,8 @@ def update_distance_counts(
     min_distance: float = 2.0,
     max_distance: float = 20.0,
     min_seq_sep: int = 4,
-    return_raw_distances: bool = False
+    return_raw_distances: bool = False,
+    include_interchain: bool = False,
 ):
     """
     Given the C3' atoms for one chain, update the global observed and reference
@@ -235,14 +241,20 @@ def update_distance_counts(
             raw_distances[bp] = []
 
     for idx1 in range(n):
-        seq_idx1, atom1, res1, bfactor1 = c3_atoms[idx1]
+        seq_idx1, atom1, res1, bfactor1, chain1 = c3_atoms[idx1]
 
         for idx2 in range(idx1 + 1, n):
-            seq_idx2, atom2, res2, bfactor2 = c3_atoms[idx2]
+            seq_idx2, atom2, res2, bfactor2, chain2 = c3_atoms[idx2]
 
-            # Sequence separation: |j - i| >= min_seq_sep
-            if seq_idx2 - seq_idx1 < min_seq_sep:
-                continue
+            if chain1 == chain2:
+                # Intra-chain distances
+                # Sequence separation: |j - i| >= min_seq_sep
+                if seq_idx2 - seq_idx1 < min_seq_sep:
+                    continue
+            else:
+                # Inter-chain distances
+                if include_interchain is False:
+                    continue
 
             dist = calculate_ED(atom1, atom2)
             
@@ -450,6 +462,7 @@ def main() -> None:
     print(f"[INFO] Sequence separation: >= {args.min_seq_sep}")
     print(f"[INFO] Using atom type: {args.atom_type}")
 
+
     # Initialize global counts
     observed_counts = {
         bp: np.zeros(n_bins, dtype=np.int64) for bp in BASE_PAIRS
@@ -468,19 +481,24 @@ def main() -> None:
         structure = parser.get_structure("RNA", pdb_path)
 
         for model in structure:
+            model_atoms_all = []
             for chain in model:
                 c3_atoms = extract_c3_atoms(chain, args.atom_type)
-                if not c3_atoms:
-                    continue
-                update_distance_counts(
-                    c3_atoms,
-                    observed_counts,
-                    reference_counts,
-                    distance_bins,
-                    args.min_distance,
-                    args.max_distance,
-                    args.min_seq_sep
-                )
+                model_atoms_all.extend(c3_atoms)
+
+            if not model_atoms_all:
+                continue
+
+            update_distance_counts(
+                model_atoms_all,
+                observed_counts,
+                reference_counts,
+                distance_bins,
+                args.min_distance,
+                args.max_distance,
+                args.min_seq_sep,
+                include_interchain=args.interchain_distance
+            )
 
     # Compute scores and save
     scores_dict = compute_scores(

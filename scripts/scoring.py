@@ -34,21 +34,38 @@ def parse_args() -> argparse.Namespace:
         default="data/potentials",
         help="Directory containing potential files (*.txt). Default: data/potentials"
     )
+    parser.add_argument(
+        "--interchain-distance", "-id",
+        action="store_true",
+        help="Whether to include inter-chain distances in scoring (default: False). "
+             "Must match the setting used during training."
+    )
     return parser.parse_args()
 
 
-def get_distance(structure, atom_type="C3'"):
+def get_distance(structure, atom_type="C3'", include_interchain=False):
     distances = {}
     for bp in BASE_PAIRS:
         distances[bp] = []
     for model in structure:
+        model_atoms_all = []
         for chain in model:
             c3_atoms = extract_c3_atoms(chain, atom_type)
-            if not c3_atoms:
-                continue
-            new_distances = update_distance_counts(c3_atoms, None, None, None, return_raw_distances=True)
-            for pair, dists in new_distances.items():
-                distances[pair].extend(dists)
+            model_atoms_all.extend(c3_atoms)
+
+        if not model_atoms_all:
+            continue
+
+        new_distances = update_distance_counts(
+            model_atoms_all,
+            None,
+            None,
+            None,
+            return_raw_distances=True,
+            include_interchain=include_interchain
+        )
+        for pair, dists in new_distances.items():
+            distances[pair].extend(dists)
     return distances
 
 def score_linear_interpolation(scoreprofile, distance):
@@ -104,7 +121,7 @@ def main():
             print(f"[WARNING] Unsupported file format for {input_file}. Skipping.")
             continue
         structure = parser.get_structure("RNA", fullpath)
-        score = est_score(get_distance(structure), potentials)
+        score = est_score(get_distance(structure, args.atom_type, args.interchain_distance), potentials)
         print(f"Score for {input_file}: {score}")
         scores[input_file] = score
     if args.csv_output is not None:
