@@ -7,3 +7,4 @@ dependencies:
   - matplotlib=3.10.8
   - rdkit=2025.09.3
   - numpy=2.2.6
+  - rpy2=3.6.4

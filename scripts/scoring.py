@@ -64,7 +64,10 @@ def score_linear_interpolation(scoreprofile, distance):
         return scores[-1]
     fraction = ((distance - bins[0]) / (bins[1] - bins[0])) % 1
     bin_index = int((distance - bins[0]) // (bins[1] - bins[0]))
-    interpolated_score = scores[bin_index] + fraction * (scores[bin_index + 1] - scores[bin_index])
+    if len(bins) > bin_index >= 0:
+        interpolated_score = scores[bin_index] + fraction * (scores[bin_index + 1] - scores[bin_index])
+    else:
+        interpolated_score = scores[-1]
     return interpolated_score
 
 def est_score(distances, potentials):

@@ -14,6 +14,10 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 from Bio import PDB
+from rpy2.robjects import r, FloatVector
+import rpy2.robjects.packages as rpackages
+import rpy2.robjects as ro
+import scipy.stats
 
 # ----------------------------------------------------------------------
 # Constants
@@ -276,6 +280,59 @@ def update_distance_counts(
                 reference_counts[bin_index] += 1
     if return_raw_distances:
         return raw_distances
+    
+def compute_scores_kde(raw_distances, max_score=10.0, round_decimals=3, min_distance=2.0):
+    """
+    Compute pseudo-energy scores from raw distances using KDE.
+    
+    raw_distances: dict of lists, {bp: [dist1, dist2, ...]}
+    Returns: dict {bp: list of (distance, score)}, distance not necessarily uniform
+    """
+    scores_dict = {}
+    for bp, distances in raw_distances.items():
+        if len(distances) == 0:
+            # No observations
+            scores_dict[bp] = []
+            continue
+
+        # KDE on raw distances
+        kde = scipy.stats.gaussian_kde(distances)
+        xs = np.linspace(min(distances), max(distances), 500)  # 500 points
+        ys = kde(xs)
+
+        # normalize KDE to sum=1 → relative frequency
+        f_obs = ys / ys.sum()
+
+        # reference: use uniform over same xs
+        f_ref = np.ones_like(f_obs) / f_obs.sum()
+
+        # compute pseudo-energy
+        bp_scores = []
+        for x, fo, fr in zip(xs, f_obs, f_ref):
+            if x < min_distance:
+                score = max_score
+            else:
+                score = min(-np.log(fo / fr), max_score)
+            bp_scores.append((round(x, 3), round(score, round_decimals)))
+        scores_dict[bp] = bp_scores
+    return scores_dict
+
+
+def save_scores_kde(scores_dict, out_dir):
+    """
+    Save KDE-based pseudo-energy scores.
+    Each line: Distance  Score
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    for bp, data in scores_dict.items():
+        if not data:
+            continue
+        out_path = os.path.join(out_dir, f"{bp}.txt")
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write("# Distance(Å)  Score\n")
+            for dist, score in data:
+                f.write(f"{dist:.3f}  {score:.3f}\n")
+        print(f"[INFO] Wrote KDE scores for {bp} -> {out_path}")
 
 
 def compute_frequency(counts: np.ndarray, pseudo_count: float = 1e-12) -> np.ndarray:
@@ -382,6 +439,19 @@ def compute_scores(
 
     return scores_dict
 
+def compute_scores_kde_r(raw_distance, bw = 'SJ-dpi', kernel = 'gaussian'):
+    r_data = FloatVector(raw_distance)
+
+    # call R density Func to compute KDE
+    # setting bandwidth, kernel params
+    density = r['density'](r_data, bw=bw, kernel=kernel)
+
+    # extract xs and ys
+    xs = np.array(density.rx2('x'))
+    ys = np.array(density.rx2('y'))
+
+    return xs, ys
+
 
 def save_scores(
     scores_dict: Dict[str, List[float]],
@@ -435,10 +505,13 @@ def main() -> None:
     print(f"[INFO] Found {len(pdb_files)} PDB/MMCIF files.")
 
     # Check density method
+    kde = False
     if args.density_method == "kde":
-        print("[WARN] KDE is not yet fully implemented. Falling back to histogram method.",
-              file=sys.stderr)
-        print(f"[WARN] Ignoring --kde-bandwidth={args.kde_bandwidth}", file=sys.stderr)
+        #print("[WARN] KDE is not yet fully implemented. Falling back to histogram method.",
+              #file=sys.stderr)
+        #print(f"[WARN] Ignoring --kde-bandwidth={args.kde_bandwidth}", file=sys.stderr)
+        print("[INFO] Using KDE method is not yet implemented. Falling back to histogram method.", file=sys.stderr)
+        kde = True
 
     # Calculate distance bins dynamically based on max_distance
     num_bins = int((args.max_distance - 0.0) / args.bin_width) + 1
@@ -458,6 +531,22 @@ def main() -> None:
 
     PDBparser = PDB.PDBParser(QUIET=True)
     CIFparser = PDB.MMCIFParser(QUIET=True)
+    
+    conf_flag = False
+    files = os.listdir(args.input)
+    for confi in range(len(files)):
+        if files[confi].endswith('.conf'):
+            conf_flag = True
+    if conf_flag:
+        valid_chains = {}
+        config_path = os.path.join(args.input, files[confi])
+        with open(config_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    valid_chains[line.split(',')[0]] = line.split(',')[1:]
+        
+        
 
     for pdb_path in pdb_files:
         print(f"[INFO] Processing {pdb_path}")
@@ -469,21 +558,75 @@ def main() -> None:
 
         for model in structure:
             for chain in model:
+                if conf_flag and chain.id not in valid_chains:
+                    continue
                 c3_atoms = extract_c3_atoms(chain, args.atom_type)
                 if not c3_atoms:
                     continue
-                update_distance_counts(
+                if kde:
+                    raw_distances = update_distance_counts(
+                        c3_atoms,
+                        observed_counts,
+                        reference_counts,
+                        distance_bins,
+                        args.min_distance,
+                        args.max_distance,
+                        args.min_seq_sep,
+                        return_raw_distances=True
+                    )
+                else:
+                    update_distance_counts(
                     c3_atoms,
                     observed_counts,
                     reference_counts,
                     distance_bins,
                     args.min_distance,
                     args.max_distance,
-                    args.min_seq_sep
+                    args.min_seq_sep,
                 )
 
     # Compute scores and save
-    scores_dict = compute_scores(
+    if kde:
+        # 收集所有 base pair 的原始距离
+        raw_distances = {}
+        for bp in BASE_PAIRS:
+            raw_distances[bp] = []
+
+        # 遍历 pdb 文件并收集原始距离
+        for pdb_path in pdb_files:
+            print(f"[INFO] Processing {pdb_path} for KDE")
+            if pdb_path.lower().endswith(".cif") or pdb_path.lower().endswith(".ent"):
+                parser = CIFparser
+            else:
+                parser = PDBparser
+            structure = parser.get_structure("RNA", pdb_path)
+            for model in structure:
+                for chain in model:
+                    c3_atoms = extract_c3_atoms(chain, args.atom_type)
+                    if not c3_atoms:
+                        continue
+                    distances = update_distance_counts(
+                        c3_atoms,
+                        observed_counts,      # dummy, not used
+                        reference_counts,     # dummy
+                        distance_bins,        # dummy
+                        args.min_distance,
+                        args.max_distance,
+                        args.min_seq_sep,
+                        return_raw_distances=True
+                    )
+                    for bp in BASE_PAIRS:
+                        raw_distances[bp].extend(distances.get(bp, []))
+
+        # 计算 KDE pseudo-energy
+        scores_dict = compute_scores_kde(raw_distances,
+                                        max_score=args.max_score,
+                                        round_decimals=args.round_decimals,
+                                        min_distance=args.min_distance)
+        #print(scores_dict)
+        save_scores_kde(scores_dict, args.out_dir)
+    else:
+        scores_dict = compute_scores(
         observed_counts,
         reference_counts,
         n_bins,
@@ -491,8 +634,9 @@ def main() -> None:
         distance_bins,
         args.min_distance,
         args.max_score
-    )
-    save_scores(scores_dict, distance_bins, args.out_dir)
+        )
+        #print(scores_dict)
+        save_scores(scores_dict, distance_bins, args.out_dir)
 
 
 if __name__ == "__main__":
